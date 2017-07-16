@@ -18,6 +18,8 @@ import (
 	"strconv"
 	"strings"
 
+	"time"
+
 	"github.com/Songmu/strrand"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
@@ -315,6 +317,8 @@ func keywordByKeywordDeleteHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
+  start := time.Now().Unix()
+
 	if content == "" {
 		return ""
 	}
@@ -348,6 +352,10 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 		link := fmt.Sprintf("<a href=\"%s\">%s</a>", u, html.EscapeString(kw))
 		content = strings.Replace(content, hash, link, -1)
 	}
+
+  elpTime := ( time.Now().Unix() - start ) / int64(time.MillSecond)
+	fmt.Printf("htmlify : %d", elpTime)
+
 	return strings.Replace(content, "\n", "<br />\n", -1)
 }
 
