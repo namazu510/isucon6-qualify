@@ -317,7 +317,7 @@ func keywordByKeywordDeleteHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
-  start := time.Now().Unix()
+  start := time.Now()
 
 	if content == "" {
 		return ""
@@ -353,8 +353,8 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 		content = strings.Replace(content, hash, link, -1)
 	}
 
-  elpTime := ( time.Now().Unix() - start ) / int64(time.MillSecond)
-	fmt.Printf("htmlify : %d", elpTime)
+  elpTime := time.Now().Sub(start)
+	fmt.Printf("htmlify : %s", elpTime)
 
 	return strings.Replace(content, "\n", "<br />\n", -1)
 }
