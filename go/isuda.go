@@ -314,15 +314,15 @@ func keywordByKeywordDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
-func starsHandler(w http.ResponseWriter, r *http.Request) {
-	keyword := r.FormValue("keyword")
+func getStars(keyword string) []Star {
+	stars := make([]Star, 0, 10)
+
 	rows, err := db.Query(`SELECT * FROM star WHERE keyword = ?`, keyword)
 	if err != nil && err != sql.ErrNoRows {
 		panicIf(err)
-		return
+		return stars
 	}
 
-	stars := make([]Star, 0, 10)
 	for rows.Next() {
 		s := Star{}
 		err := rows.Scan(&s.ID, &s.Keyword, &s.UserName, &s.CreatedAt)
@@ -330,6 +330,17 @@ func starsHandler(w http.ResponseWriter, r *http.Request) {
 		stars = append(stars, s)
 	}
 	rows.Close()
+	return stars
+}
+
+func setStars(keyword, user string) {
+	_, err := db.Exec(`INSERT INTO star (keyword, user_name, created_at) VALUES (?, ?, NOW())`, keyword, user)
+	panicIf(err)
+}
+
+func starsHandler(w http.ResponseWriter, r *http.Request) {
+	keyword := r.FormValue("keyword")
+	stars := getStars(keyword)
 
 	reIsutar.JSON(w, http.StatusOK, map[string][]Star{
 		"result": stars,
@@ -338,25 +349,23 @@ func starsHandler(w http.ResponseWriter, r *http.Request) {
 
 func starsPostHandler(w http.ResponseWriter, r *http.Request) {
 	keyword := r.FormValue("keyword")
-
+	user := r.FormValue("user")
 	origin := os.Getenv("ISUDA_ORIGIN")
 	if origin == "" {
 		origin = "http://localhost:5000"
 	}
-	u, err := r.URL.Parse(fmt.Sprintf("%s/keyword/%s", origin, pathURIEscape(keyword)))
-	panicIf(err)
-	resp, err := http.Get(u.String())
-	panicIf(err)
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
+
+	rows, err := db.Query(`SELECT * FROM entry WHERE keyword = ?`, keyword)
+	if err != nil && err != sql.ErrNoRows {
+		panic(err)
+	}
+	if !rows.Next() {
+		// キーワードが存在しない場合は、404を返す
 		notFound(w)
 		return
 	}
 
-	user := r.FormValue("user")
-	_, err = db.Exec(`INSERT INTO star (keyword, user_name, created_at) VALUES (?, ?, NOW())`, keyword, user)
-	panicIf(err)
-
+	setStars(keyword, user)
 	reIsutar.JSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }
 
