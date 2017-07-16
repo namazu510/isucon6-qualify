@@ -36,10 +36,11 @@ var (
 	isutarEndpoint string
 	isupamEndpoint string
 
-	baseUrl *url.URL
-	db      *sql.DB
-	re      *render.Render
-	store   *sessions.CookieStore
+	baseUrl  *url.URL
+	db       *sql.DB
+	re       *render.Render
+	reIsutar *render.Render
+	store    *sessions.CookieStore
 
 	errInvalidUser = errors.New("Invalid User")
 )
@@ -71,13 +72,12 @@ func authenticate(w http.ResponseWriter, r *http.Request) error {
 	return errInvalidUser
 }
 
-func initializeHandler(w http.ResponseWriter, r *http.Request) {
+func initializeIsudaHandler(w http.ResponseWriter, r *http.Request) {
 	_, err := db.Exec(`DELETE FROM entry WHERE id > 7101`)
 	panicIf(err)
 
-	resp, err := http.Get(fmt.Sprintf("%s/initialize", isutarEndpoint))
+	_, err = db.Exec("TRUNCATE star")
 	panicIf(err)
-	defer resp.Body.Close()
 
 	re.JSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }
@@ -108,7 +108,7 @@ func topHandler(w http.ResponseWriter, r *http.Request) {
 		err := rows.Scan(&e.ID, &e.AuthorID, &e.Keyword, &e.Description, &e.UpdatedAt, &e.CreatedAt)
 		panicIf(err)
 		e.Html = htmlify(w, r, e.Description)
-		e.Stars = loadStars(e.Keyword)
+		e.Stars = getStars(e.Keyword)
 		entries = append(entries, &e)
 	}
 	rows.Close()
@@ -270,7 +270,7 @@ func keywordByKeywordHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	e.Html = htmlify(w, r, e.Description)
-	e.Stars = loadStars(e.Keyword)
+	e.Stars = getStars(e.Keyword)
 
 	re.HTML(w, http.StatusOK, "keyword", struct {
 		Context context.Context
@@ -316,6 +316,61 @@ func keywordByKeywordDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
+func getStars(keyword string) []*Star {
+	stars := make([]*Star, 0, 10)
+
+	rows, err := db.Query(`SELECT * FROM star WHERE keyword = ?`, keyword)
+	if err != nil && err != sql.ErrNoRows {
+		panicIf(err)
+		return stars
+	}
+
+	for rows.Next() {
+		s := &Star{}
+		err := rows.Scan(&s.ID, &s.Keyword, &s.UserName, &s.CreatedAt)
+		panicIf(err)
+		stars = append(stars, s)
+	}
+	rows.Close()
+	return stars
+}
+
+func setStars(keyword, user string) {
+	_, err := db.Exec(`INSERT INTO star (keyword, user_name, created_at) VALUES (?, ?, NOW())`, keyword, user)
+	panicIf(err)
+}
+
+func starsHandler(w http.ResponseWriter, r *http.Request) {
+	keyword := r.FormValue("keyword")
+	stars := getStars(keyword)
+
+	reIsutar.JSON(w, http.StatusOK, map[string][]*Star{
+		"result": stars,
+	})
+}
+
+func starsPostHandler(w http.ResponseWriter, r *http.Request) {
+	keyword := r.FormValue("keyword")
+	user := r.FormValue("user")
+	origin := os.Getenv("ISUDA_ORIGIN")
+	if origin == "" {
+		origin = "http://localhost:5000"
+	}
+
+	rows, err := db.Query(`SELECT * FROM entry WHERE keyword = ?`, keyword)
+	if err != nil && err != sql.ErrNoRows {
+		panic(err)
+	}
+	if !rows.Next() {
+		// キーワードが存在しない場合は、404を返す
+		notFound(w)
+		return
+	}
+
+	setStars(keyword, user)
+	reIsutar.JSON(w, http.StatusOK, map[string]string{"result": "ok"})
+}
+
 func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
   start := time.Now()
 
@@ -357,21 +412,6 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 	fmt.Printf("htmlify : %s", elpTime)
 
 	return strings.Replace(content, "\n", "<br />\n", -1)
-}
-
-func loadStars(keyword string) []*Star {
-	v := url.Values{}
-	v.Set("keyword", keyword)
-	resp, err := http.Get(fmt.Sprintf("%s/stars", isutarEndpoint) + "?" + v.Encode())
-	panicIf(err)
-	defer resp.Body.Close()
-
-	var data struct {
-		Result []*Star `json:result`
-	}
-	err = json.NewDecoder(resp.Body).Decode(&data)
-	panicIf(err)
-	return data.Result
 }
 
 func isSpamContents(content string) bool {
@@ -464,19 +504,24 @@ func main() {
 				"raw": func(text string) template.HTML {
 					return template.HTML(text)
 				},
-				"add": func(a, b int) int { return a + b },
-				"sub": func(a, b int) int { return a - b },
+				"add": func(a, b int) int {
+					return a + b
+				},
+				"sub": func(a, b int) int {
+					return a - b
+				},
 				"entry_with_ctx": func(entry Entry, ctx context.Context) *EntryWithCtx {
 					return &EntryWithCtx{Context: ctx, Entry: entry}
 				},
 			},
 		},
 	})
+	reIsutar = render.New(render.Options{Directory: "dummy"})
 
 	r := mux.NewRouter()
 	r.UseEncodedPath()
 	r.HandleFunc("/", myHandler(topHandler))
-	r.HandleFunc("/initialize", myHandler(initializeHandler)).Methods("GET")
+	r.HandleFunc("/initialize", myHandler(initializeIsudaHandler)).Methods("GET")
 	r.HandleFunc("/robots.txt", myHandler(robotsHandler))
 	r.HandleFunc("/keyword", myHandler(keywordPostHandler)).Methods("POST")
 
@@ -492,6 +537,10 @@ func main() {
 	k := r.PathPrefix("/keyword/{keyword}").Subrouter()
 	k.Methods("GET").HandlerFunc(myHandler(keywordByKeywordHandler))
 	k.Methods("POST").HandlerFunc(myHandler(keywordByKeywordDeleteHandler))
+
+	s := r.PathPrefix("/stars").Subrouter()
+	s.Methods("GET").HandlerFunc(myHandler(starsHandler))
+	s.Methods("POST").HandlerFunc(myHandler(starsPostHandler))
 
 	r.PathPrefix("/").Handler(http.FileServer(http.Dir("./public/")))
 	log.Fatal(http.ListenAndServe(":5000", r))
