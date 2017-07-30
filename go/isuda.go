@@ -367,9 +367,10 @@ func starsPostHandler(w http.ResponseWriter, r *http.Request) {
 	if !rows.Next() {
 		// キーワードが存在しない場合は、404を返す
 		notFound(w)
+                rows.Close()
 		return
 	}
-
+        rows.Close()
 	setStars(keyword, user)
 	reIsutar.JSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }
