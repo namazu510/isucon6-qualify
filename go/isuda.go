@@ -418,7 +418,8 @@ func genKeywordRepracer() (*strings.Replacer, map[string]string) {
 }
 
 func resetKeywordReplacer() {
-	cacheStore.Flush()
+	cacheStore.Delete("replacer")
+	cacheStore.Delete("kw2sha")
 }
 
 func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
