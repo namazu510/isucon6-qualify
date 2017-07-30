@@ -173,7 +173,7 @@ func keywordPostHandler(w http.ResponseWriter, r *http.Request) {
 		author_id = ?, keyword = ?, description = ?, updated_at = NOW()
 	`, userID, keyword, description, userID, keyword, description)
 	panicIf(err)
-	resetKeywordReg()
+	resetKeywordReplacer()
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -315,7 +315,7 @@ func keywordByKeywordDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err = db.Exec(`DELETE FROM entry WHERE keyword = ?`, keyword)
 	panicIf(err)
-	resetKeywordReg()
+	resetKeywordReplacer()
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -374,15 +374,20 @@ func starsPostHandler(w http.ResponseWriter, r *http.Request) {
 	reIsutar.JSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }
 
-func resetKeywordReg() {
-	cacheStore.Delete("keyword-reg-ex")
+func fetchKeywordReplacer() (*strings.Replacer, map[string]string) {
+	re, found := cacheStore.Get("replacer")
+	kw2sha, found2 := cacheStore.Get("kw2sha")
+	if found && found2 {
+		fmt.Println("replacer cache hit!")
+		return re.(*strings.Replacer), kw2sha.(map[string]string)
+	}
+	newRep, newKw2sha := genKeywordRepracer()
+	cacheStore.Set("replacer", newRep, cache.DefaultExpiration)
+	cacheStore.Set("kw2sha", newKw2sha, cache.DefaultExpiration)
+	return newRep, newKw2sha
 }
 
-func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
-	if content == "" {
-		return ""
-	}
-
+func genKeywordRepracer() (*strings.Replacer, map[string]string) {
 	rows, err := db.Query(`
 		SELECT keyword FROM entry ORDER BY CHARACTER_LENGTH(keyword) DESC
 	`)
@@ -403,18 +408,30 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 
 	replaceList := make([]string, 0, 1000)
 	kw2sha := make(map[string]string)
-	for _, keyword := range keywords{
+	for _, keyword := range keywords {
 		hashKey := "isuda_" + fmt.Sprintf("%x", sha1.Sum([]byte(keyword)))
 		kw2sha[keyword] = hashKey
 		replaceList = append(replaceList, keyword)
 		replaceList = append(replaceList, hashKey)
 	}
-	re := strings.NewReplacer(replaceList...)
+	return strings.NewReplacer(replaceList...), kw2sha
+}
 
-	start := time.Now();
+func resetKeywordReplacer() {
+	cacheStore.Flush()
+}
+
+func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
+	if content == "" {
+		return ""
+	}
+
+	re, kw2sha := fetchKeywordReplacer()
+
+	start := time.Now()
 	content = re.Replace(content)
-	end := time.Now();
-	fmt.Printf("%f秒\n",(end.Sub(start)).Seconds())
+	end := time.Now()
+	fmt.Printf("%f秒\n", (end.Sub(start)).Seconds())
 	content = html.EscapeString(content)
 	for kw, hash := range kw2sha {
 		u, err := r.URL.Parse(baseUrl.String() + "/keyword/" + pathURIEscape(kw))
