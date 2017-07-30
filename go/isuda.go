@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/patrickmn/go-cache"
 	"time"
 
 	"github.com/Songmu/strrand"
@@ -36,12 +37,12 @@ var (
 	isutarEndpoint string
 	isupamEndpoint string
 
-	baseUrl  *url.URL
-	db       *sql.DB
-	re       *render.Render
-	reIsutar *render.Render
-	store    *sessions.CookieStore
-
+	baseUrl        *url.URL
+	db             *sql.DB
+	re             *render.Render
+	reIsutar       *render.Render
+	store          *sessions.CookieStore
+	cacheStore     *cache.Cache
 	errInvalidUser = errors.New("Invalid User")
 )
 
@@ -172,6 +173,7 @@ func keywordPostHandler(w http.ResponseWriter, r *http.Request) {
 		author_id = ?, keyword = ?, description = ?, updated_at = NOW()
 	`, userID, keyword, description, userID, keyword, description)
 	panicIf(err)
+	resetKeywordReg()
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -313,6 +315,7 @@ func keywordByKeywordDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err = db.Exec(`DELETE FROM entry WHERE keyword = ?`, keyword)
 	panicIf(err)
+	resetKeywordReg()
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -371,14 +374,19 @@ func starsPostHandler(w http.ResponseWriter, r *http.Request) {
 	reIsutar.JSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }
 
-func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
-  start := time.Now()
-
-	if content == "" {
-		return ""
+func fetchKeywordReg() *regexp.Regexp {
+	re, found := cacheStore.Get("keyword-reg-ex")
+	if found && re != nil {
+		return re.(*regexp.Regexp)
 	}
+	newReg := genKeywordReg()
+	cacheStore.Set("keyword-reg-ex", newReg, cache.DefaultExpiration)
+	return newReg
+}
+
+func genKeywordReg() *regexp.Regexp {
 	rows, err := db.Query(`
-		SELECT keyword FROM entry ORDER BY CHARACTER_LENGTH(keyword) DESC LIMIT 500
+		SELECT keyword FROM entry ORDER BY CHARACTER_LENGTH(keyword) DESC
 	`)
 	panicIf(err)
 	entries := make([]*Entry, 0, 500)
@@ -395,6 +403,19 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 		keywords = append(keywords, regexp.QuoteMeta(entry.Keyword))
 	}
 	re := regexp.MustCompile("(" + strings.Join(keywords, "|") + ")")
+
+	return re
+}
+
+func resetKeywordReg() {
+	cacheStore.Delete("keyword-reg-ex")
+}
+
+func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
+	if content == "" {
+		return ""
+	}
+	re := fetchKeywordReg()
 	kw2sha := make(map[string]string)
 	content = re.ReplaceAllStringFunc(content, func(kw string) string {
 		kw2sha[kw] = "isuda_" + fmt.Sprintf("%x", sha1.Sum([]byte(kw)))
@@ -407,10 +428,6 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 		link := fmt.Sprintf("<a href=\"%s\">%s</a>", u, html.EscapeString(kw))
 		content = strings.Replace(content, hash, link, -1)
 	}
-
-  elpTime := time.Now().Sub(start)
-	fmt.Printf("htmlify : %s", elpTime)
-
 	return strings.Replace(content, "\n", "<br />\n", -1)
 }
 
@@ -462,9 +479,12 @@ func main() {
 	}
 	user := os.Getenv("ISUDA_DB_USER")
 	if user == "" {
-		user = "root"
+		user = "isucon"
 	}
 	password := os.Getenv("ISUDA_DB_PASSWORD")
+	if password == "" {
+		password = "isucon"
+	}
 	dbname := os.Getenv("ISUDA_DB_NAME")
 	if dbname == "" {
 		dbname = "isuda"
@@ -490,6 +510,9 @@ func main() {
 	}
 
 	store = sessions.NewCookieStore([]byte(sessionSecret))
+
+	// cache create
+	cacheStore = cache.New(5*time.Minute, 10*time.Minute)
 
 	re = render.New(render.Options{
 		Directory: "views",
