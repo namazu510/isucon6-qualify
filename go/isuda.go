@@ -374,17 +374,15 @@ func starsPostHandler(w http.ResponseWriter, r *http.Request) {
 	reIsutar.JSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }
 
-func fetchKeywordReg() *regexp.Regexp {
-	re, found := cacheStore.Get("keyword-reg-ex")
-	if found && re != nil {
-		return re.(*regexp.Regexp)
-	}
-	newReg := genKeywordReg()
-	cacheStore.Set("keyword-reg-ex", newReg, cache.DefaultExpiration)
-	return newReg
+func resetKeywordReg() {
+	cacheStore.Delete("keyword-reg-ex")
 }
 
-func genKeywordReg() *regexp.Regexp {
+func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
+	if content == "" {
+		return ""
+	}
+
 	rows, err := db.Query(`
 		SELECT keyword FROM entry ORDER BY CHARACTER_LENGTH(keyword) DESC
 	`)
@@ -402,25 +400,21 @@ func genKeywordReg() *regexp.Regexp {
 	for _, entry := range entries {
 		keywords = append(keywords, regexp.QuoteMeta(entry.Keyword))
 	}
-	re := regexp.MustCompile("(" + strings.Join(keywords, "|") + ")")
 
-	return re
-}
-
-func resetKeywordReg() {
-	cacheStore.Delete("keyword-reg-ex")
-}
-
-func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
-	if content == "" {
-		return ""
-	}
-	re := fetchKeywordReg()
+	replaceList := make([]string, 0, 1000)
 	kw2sha := make(map[string]string)
-	content = re.ReplaceAllStringFunc(content, func(kw string) string {
-		kw2sha[kw] = "isuda_" + fmt.Sprintf("%x", sha1.Sum([]byte(kw)))
-		return kw2sha[kw]
-	})
+	for _, keyword := range keywords{
+		hashKey := "isuda_" + fmt.Sprintf("%x", sha1.Sum([]byte(keyword)))
+		kw2sha[keyword] = hashKey
+		replaceList = append(replaceList, keyword)
+		replaceList = append(replaceList, hashKey)
+	}
+	re := strings.NewReplacer(replaceList...)
+
+	start := time.Now();
+	content = re.Replace(content)
+	end := time.Now();
+	fmt.Printf("%f秒\n",(end.Sub(start)).Seconds())
 	content = html.EscapeString(content)
 	for kw, hash := range kw2sha {
 		u, err := r.URL.Parse(baseUrl.String() + "/keyword/" + pathURIEscape(kw))
