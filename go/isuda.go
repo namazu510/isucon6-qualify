@@ -377,6 +377,7 @@ func starsPostHandler(w http.ResponseWriter, r *http.Request) {
 func fetchKeywordReg() *regexp.Regexp {
 	re, found := cacheStore.Get("keyword-reg-ex")
 	if found && re != nil {
+		fmt.Println("cache hit!")
 		return re.(*regexp.Regexp)
 	}
 	newReg := genKeywordReg()
@@ -385,6 +386,7 @@ func fetchKeywordReg() *regexp.Regexp {
 }
 
 func genKeywordReg() *regexp.Regexp {
+	start := time.Now()
 	rows, err := db.Query(`
 		SELECT keyword FROM entry ORDER BY CHARACTER_LENGTH(keyword) DESC
 	`)
@@ -403,12 +405,13 @@ func genKeywordReg() *regexp.Regexp {
 		keywords = append(keywords, regexp.QuoteMeta(entry.Keyword))
 	}
 	re := regexp.MustCompile("(" + strings.Join(keywords, "|") + ")")
-
+	end := time.Now()
+	fmt.Printf("reg-gen : %s\n", end.Sub(start))
 	return re
 }
 
 func resetKeywordReg() {
-	cacheStore.Delete("keyword-reg-ex")
+	cacheStore.Flush()
 }
 
 func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
@@ -416,11 +419,27 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 		return ""
 	}
 	re := fetchKeywordReg()
+
+	hash := sha1.New()
+	hash.Write([]byte(re.String()))
+	hash.Write([]byte(content))
+	cacheKey := fmt.Sprintf("%x", hash.Sum(nil))
+	cacheData, found := cacheStore.Get(cacheKey)
+	if found {
+		fmt.Println("htmlify cache hit!")
+		return cacheData.(string)
+	}
+
+	start := time.Now()
+
 	kw2sha := make(map[string]string)
+
 	content = re.ReplaceAllStringFunc(content, func(kw string) string {
 		kw2sha[kw] = "isuda_" + fmt.Sprintf("%x", sha1.Sum([]byte(kw)))
 		return kw2sha[kw]
 	})
+
+	fmt.Printf("replace-time ph1 : %s\n", time.Now().Sub(start))
 	content = html.EscapeString(content)
 	for kw, hash := range kw2sha {
 		u, err := r.URL.Parse(baseUrl.String() + "/keyword/" + pathURIEscape(kw))
@@ -428,7 +447,15 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 		link := fmt.Sprintf("<a href=\"%s\">%s</a>", u, html.EscapeString(kw))
 		content = strings.Replace(content, hash, link, -1)
 	}
-	return strings.Replace(content, "\n", "<br />\n", -1)
+	fmt.Printf("replace-time ph2 : %s\n", time.Now().Sub(start))
+
+	res := strings.Replace(content, "\n", "<br />\n", -1)
+	end := time.Now()
+
+	fmt.Printf("replace-time all : %s\n", end.Sub(start))
+
+	cacheStore.Add(cacheKey, res, cache.DefaultExpiration)
+	return res
 }
 
 func isSpamContents(content string) bool {
