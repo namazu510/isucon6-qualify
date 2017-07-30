@@ -411,10 +411,7 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 	}
 	re := strings.NewReplacer(replaceList...)
 
-	start := time.Now();
 	content = re.Replace(content)
-	end := time.Now();
-	fmt.Printf("%f秒\n",(end.Sub(start)).Seconds())
 	content = html.EscapeString(content)
 	for kw, hash := range kw2sha {
 		u, err := r.URL.Parse(baseUrl.String() + "/keyword/" + pathURIEscape(kw))
