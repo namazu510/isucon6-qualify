@@ -376,25 +376,25 @@ func starsPostHandler(w http.ResponseWriter, r *http.Request) {
 	reIsutar.JSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }
 
-func fetchKeywordReplacer() (*strings.Replacer, map[string]string) {
+func fetchKeywordReplacer() (*strings.Replacer, *strings.Replacer) {
 	re, found := cacheStore.Get("replacer")
-	kw2sha, found2 := cacheStore.Get("kw2sha")
+	re2, found2 := cacheStore.Get("replacer2")
 	if found && found2 {
 		fmt.Println("replacer cache hit!")
-		return re.(*strings.Replacer), kw2sha.(map[string]string)
+		return re.(*strings.Replacer), re2.(*strings.Replacer)
 	}
-	newRep, newKw2sha := genKeywordRepracer()
+	newRep, newRep2 := genKeywordRepracer()
 	cacheStore.Set("replacer", newRep, cache.DefaultExpiration)
-	cacheStore.Set("kw2sha", newKw2sha, cache.DefaultExpiration)
-	return newRep, newKw2sha
+	cacheStore.Set("replacer2", newRep2, cache.DefaultExpiration)
+	return newRep, newRep2
 }
 
-func genKeywordRepracer() (*strings.Replacer, map[string]string) {
+func genKeywordRepracer() (*strings.Replacer, *strings.Replacer) {
 	rows, err := db.Query(`
 		SELECT keyword FROM entry ORDER BY CHARACTER_LENGTH(keyword) DESC
 	`)
 	panicIf(err)
-	entries := make([]*Entry, 0, 500)
+	entries := make([]*Entry, 0, 8000)
 	for rows.Next() {
 		e := Entry{}
 		err := rows.Scan(&e.Keyword)
@@ -403,12 +403,12 @@ func genKeywordRepracer() (*strings.Replacer, map[string]string) {
 	}
 	rows.Close()
 
-	keywords := make([]string, 0, 500)
+	keywords := make([]string, 0, 8000)
 	for _, entry := range entries {
 		keywords = append(keywords, regexp.QuoteMeta(entry.Keyword))
 	}
 
-	replaceList := make([]string, 0, 1000)
+	replaceList := make([]string, 0, 8000)
 	kw2sha := make(map[string]string)
 	for _, keyword := range keywords {
 		hashKey := "isuda_" + fmt.Sprintf("%x", sha1.Sum([]byte(keyword)))
@@ -416,12 +416,25 @@ func genKeywordRepracer() (*strings.Replacer, map[string]string) {
 		replaceList = append(replaceList, keyword)
 		replaceList = append(replaceList, hashKey)
 	}
-	return strings.NewReplacer(replaceList...), kw2sha
+
+
+	replaceList2 := make([]string, 0, 8000)
+	for kw, hash := range kw2sha {
+		u, err := baseUrl.Parse(baseUrl.String() + "/keyword/" + pathURIEscape(kw))
+		panicIf(err)
+		link := fmt.Sprintf("<a href=\"%s\">%s</a>", u, html.EscapeString(kw))
+		replaceList2 = append(replaceList2, hash)
+		replaceList2 = append(replaceList2, link)
+	}
+	replaceList2 = append(replaceList2, "\n")
+	replaceList2 = append(replaceList2, "<br />\n")
+
+	return strings.NewReplacer(replaceList...), strings.NewReplacer(replaceList2...)
 }
 
 func resetKeywordReplacer() {
 	cacheStore.Delete("replacer")
-	cacheStore.Delete("kw2sha")
+	cacheStore.Delete("replacer2")
 	contentCache.Flush()
 }
 
@@ -436,24 +449,14 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 		return cnt.(string)
 	}
 
-	re, kw2sha := fetchKeywordReplacer()
+	re, re2 := fetchKeywordReplacer()
 	content = re.Replace(content)
 	content = html.EscapeString(content)
-	replaceList := make([]string, 0, 1000)
-	for kw, hash := range kw2sha {
-		u, err := r.URL.Parse(baseUrl.String() + "/keyword/" + pathURIEscape(kw))
-		panicIf(err)
-		link := fmt.Sprintf("<a href=\"%s\">%s</a>", u, html.EscapeString(kw))
-		replaceList = append(replaceList, hash)
-		replaceList = append(replaceList, link)
-	}
-	replaceList = append(replaceList, "\n")
-	replaceList = append(replaceList, "<br />\n")
-	re = strings.NewReplacer(replaceList...)
-	content = re.Replace(content);
-	contentCache.Set(origContent, content, cache.DefaultExpiration)
-	return content
+	content = re2.Replace(content);
 
+	contentCache.Set(origContent, content, cache.DefaultExpiration)
+
+	return content
 }
 
 func isSpamContents(content string) bool {
