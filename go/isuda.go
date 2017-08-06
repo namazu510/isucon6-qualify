@@ -446,7 +446,6 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 		link := fmt.Sprintf("<a href=\"%s\">%s</a>", u, html.EscapeString(kw))
 		replaceList = append(replaceList, hash)
 		replaceList = append(replaceList, link)
-		content = strings.Replace(content, hash, link, -1)
 	}
 	replaceList = append(replaceList, "\n")
 	replaceList = append(replaceList, "<br />\n")
