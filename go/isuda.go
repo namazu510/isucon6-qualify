@@ -43,6 +43,7 @@ var (
 	reIsutar       *render.Render
 	store          *sessions.CookieStore
 	cacheStore     *cache.Cache
+	contentCache   *cache.Cache
 	errInvalidUser = errors.New("Invalid User")
 )
 
@@ -367,10 +368,10 @@ func starsPostHandler(w http.ResponseWriter, r *http.Request) {
 	if !rows.Next() {
 		// キーワードが存在しない場合は、404を返す
 		notFound(w)
-                rows.Close()
+		rows.Close()
 		return
 	}
-        rows.Close()
+	rows.Close()
 	setStars(keyword, user)
 	reIsutar.JSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }
@@ -421,15 +422,22 @@ func genKeywordRepracer() (*strings.Replacer, map[string]string) {
 func resetKeywordReplacer() {
 	cacheStore.Delete("replacer")
 	cacheStore.Delete("kw2sha")
+	contentCache.Flush()
 }
 
 func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 	if content == "" {
 		return ""
 	}
+	origContent := content
 
 	re, kw2sha := fetchKeywordReplacer()
 
+	cnt, found := contentCache.Get(content)
+	if found {
+		return cnt.(string)
+	}
+	content = cnt.(string)
 	content = re.Replace(content)
 	content = html.EscapeString(content)
 	for kw, hash := range kw2sha {
@@ -438,7 +446,9 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 		link := fmt.Sprintf("<a href=\"%s\">%s</a>", u, html.EscapeString(kw))
 		content = strings.Replace(content, hash, link, -1)
 	}
-	return strings.Replace(content, "\n", "<br />\n", -1)
+	content = strings.Replace(content, "\n", "<br />\n", -1)
+	contentCache.Set(origContent, content, cache.DefaultExpiration)
+	return content
 }
 
 func isSpamContents(content string) bool {
