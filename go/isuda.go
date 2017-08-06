@@ -408,7 +408,7 @@ func genKeywordRepracer() (*strings.Replacer, map[string]string) {
 		keywords = append(keywords, regexp.QuoteMeta(entry.Keyword))
 	}
 
-	replaceList := make([]string, 0, 1000)
+	replaceList := make([]string, 0, 14000)
 	kw2sha := make(map[string]string)
 	for _, keyword := range keywords {
 		hashKey := "isuda_" + fmt.Sprintf("%x", sha1.Sum([]byte(keyword)))
@@ -439,7 +439,7 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 	re, kw2sha := fetchKeywordReplacer()
 	content = re.Replace(content)
 	content = html.EscapeString(content)
-	replaceList := make([]string, 0, 1000)
+	replaceList := make([]string, 0, 14000)
 	for kw, hash := range kw2sha {
 		u, err := r.URL.Parse(baseUrl.String() + "/keyword/" + pathURIEscape(kw))
 		panicIf(err)
