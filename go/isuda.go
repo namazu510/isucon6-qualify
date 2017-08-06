@@ -26,6 +26,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
 	"github.com/unrolled/render"
+	"sync"
 )
 
 const (
@@ -44,15 +45,18 @@ var (
 	store          *sessions.CookieStore
 	cacheStore     *cache.Cache
 	contentCache   *cache.Cache
-	userCache      *cache.Cache
+	userCache      map[string]*User
+	userCacheLock  sync.RWMutex
 	errInvalidUser = errors.New("Invalid User")
 )
 
 // key is userID or userName
 func getUser(key string) (*User, bool) {
-	tmp, found := userCache.Get(key)
+	userCacheLock.RLock()
+	user, found := userCache[key]
+	userCacheLock.RUnlock()
 	if found {
-		return tmp.(*User), true
+		return user, true
 	}
 	return nil, false
 }
@@ -63,8 +67,10 @@ func loadUsers() {
 	for rows.Next() {
 		user := &User{}
 		rows.Scan(&user.ID, &user.Name, &user.Salt, &user.Password, &user.CreatedAt)
-		userCache.Set(strconv.Itoa(user.ID), user, cache.DefaultExpiration)
-		userCache.Set(user.Name, user, cache.DefaultExpiration)
+		userCacheLock.Lock()
+		userCache[strconv.Itoa(user.ID)] = user
+		userCache[user.Name] = user
+		userCacheLock.Unlock()
 	}
 }
 
@@ -279,8 +285,10 @@ func register(user string, pass string) int64 {
 		Password:  encpass,
 		CreatedAt: now,
 	}
-	userCache.Set(strconv.Itoa(id), u, cache.DefaultExpiration)
-	userCache.Set(user, u, cache.DefaultExpiration)
+	userCacheLock.Lock()
+	userCache[strconv.Itoa(id)] = u
+	userCache[user] = u
+	userCacheLock.Unlock()
 	return lastInsertID
 }
 
@@ -570,7 +578,7 @@ func main() {
 	// cache create
 	cacheStore = cache.New(2*time.Minute, 2*time.Minute)
 	contentCache = cache.New(2*time.Minute, 2*time.Minute)
-	userCache = cache.New(2*time.Minute, 2*time.Minute)
+	userCache = map[string]*User{}
 	loadUsers()
 
 	re = render.New(render.Options{
