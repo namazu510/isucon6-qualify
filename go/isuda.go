@@ -437,7 +437,6 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 	if found {
 		return cnt.(string)
 	}
-	content = cnt.(string)
 	content = re.Replace(content)
 	content = html.EscapeString(content)
 	for kw, hash := range kw2sha {
@@ -533,7 +532,7 @@ func main() {
 
 	// cache create
 	cacheStore = cache.New(5*time.Minute, 10*time.Minute)
-	contentCache =cache.New(5*time.Minute, 10*time.Minute)
+	contentCache = cache.New(5*time.Minute, 10*time.Minute)
 
 	re = render.New(render.Options{
 		Directory: "views",
