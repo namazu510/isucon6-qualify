@@ -44,8 +44,29 @@ var (
 	store          *sessions.CookieStore
 	cacheStore     *cache.Cache
 	contentCache   *cache.Cache
+	userCache      *cache.Cache
 	errInvalidUser = errors.New("Invalid User")
 )
+
+// key is userID or userName
+func getUser(key string) (*User, bool) {
+	tmp, found := userCache.Get(key)
+	if found {
+		return tmp.(*User), true
+	}
+	return nil, false
+}
+
+func loadUsers() {
+	rows, err := db.Query(`SELECT * FROM user`)
+	panicIf(err)
+	for rows.Next() {
+		user := &User{}
+		rows.Scan(&user.ID, &user.Name, &user.Salt, &user.Password, &user.CreatedAt)
+		userCache.Set(strconv.Itoa(user.ID), user, cache.DefaultExpiration)
+		userCache.Set(user.Name, user, cache.DefaultExpiration)
+	}
+}
 
 func setName(w http.ResponseWriter, r *http.Request) error {
 	session := getSession(w, r)
@@ -54,14 +75,10 @@ func setName(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 	setContext(r, "user_id", userID)
-	row := db.QueryRow(`SELECT name FROM user WHERE id = ?`, userID)
-	user := User{}
-	err := row.Scan(&user.Name)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return errInvalidUser
-		}
-		panicIf(err)
+
+	user, found := getUser(strconv.Itoa(userID.(int)))
+	if !found {
+		return errInvalidUser
 	}
 	setContext(r, "user_name", user.Name)
 	return nil
@@ -194,14 +211,15 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 
 func loginPostHandler(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("name")
-	row := db.QueryRow(`SELECT * FROM user WHERE name = ?`, name)
-	user := User{}
-	err := row.Scan(&user.ID, &user.Name, &user.Salt, &user.Password, &user.CreatedAt)
-	if err == sql.ErrNoRows || user.Password != fmt.Sprintf("%x", sha1.Sum([]byte(user.Salt+r.FormValue("password")))) {
+	user, found := getUser(name)
+	if !found {
 		forbidden(w)
 		return
 	}
-	panicIf(err)
+	if user.Password != fmt.Sprintf("%x", sha1.Sum([]byte(user.Salt+r.FormValue("password")))) {
+		forbidden(w)
+		return
+	}
 	session := getSession(w, r)
 	session.Values["user_id"] = user.ID
 	session.Save(r, w)
@@ -245,11 +263,24 @@ func registerPostHandler(w http.ResponseWriter, r *http.Request) {
 
 func register(user string, pass string) int64 {
 	salt, err := strrand.RandomString(`....................`)
+	encpass := fmt.Sprintf("%x", sha1.Sum([]byte(salt+pass)))
+	now := time.Now()
 	panicIf(err)
-	res, err := db.Exec(`INSERT INTO user (name, salt, password, created_at) VALUES (?, ?, ?, NOW())`,
-		user, salt, fmt.Sprintf("%x", sha1.Sum([]byte(salt+pass))))
+	res, err := db.Exec(`INSERT INTO user (name, salt, password, created_at) VALUES (?, ?, ?, ?)`,
+		user, salt, encpass, now)
 	panicIf(err)
 	lastInsertID, _ := res.LastInsertId()
+	id := int(lastInsertID)
+
+	u := &User{
+		ID:        id,
+		Name:      user,
+		Salt:      salt,
+		Password:  encpass,
+		CreatedAt: now,
+	}
+	userCache.Set(strconv.Itoa(id), u, cache.DefaultExpiration)
+	userCache.Set(user, u, cache.DefaultExpiration)
 	return lastInsertID
 }
 
@@ -450,7 +481,7 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 	replaceList = append(replaceList, "\n")
 	replaceList = append(replaceList, "<br />\n")
 	re = strings.NewReplacer(replaceList...)
-	content = re.Replace(content);
+	content = re.Replace(content)
 	contentCache.Set(origContent, content, cache.DefaultExpiration)
 	return content
 
@@ -539,6 +570,8 @@ func main() {
 	// cache create
 	cacheStore = cache.New(5*time.Minute, 10*time.Minute)
 	contentCache = cache.New(5*time.Minute, 10*time.Minute)
+	userCache = cache.New(5*time.Minute, 10*time.Minute)
+	loadUsers()
 
 	re = render.New(render.Options{
 		Directory: "views",
