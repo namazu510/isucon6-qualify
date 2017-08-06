@@ -43,10 +43,11 @@ var (
 	re              *render.Render
 	reIsutar        *render.Render
 	store           *sessions.CookieStore
-	cacheStore      *cache.Cache
 	contentCache    *cache.Cache
 	userCache       map[string]*User
 	userCacheLock   sync.RWMutex
+	replacer1       *strings.Replacer
+	replacer2       *strings.Replacer
 	replaceList1    []string
 	replaceList2    []string
 	replaceListLock sync.RWMutex
@@ -421,18 +422,9 @@ func starsPostHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func fetchKeywordReplacer() (*strings.Replacer, *strings.Replacer) {
-	re, found := cacheStore.Get("replacer")
-	re2, found2 := cacheStore.Get("replacer2")
-	if found && found2 {
-		return re.(*strings.Replacer), re2.(*strings.Replacer)
-	}
 	replaceListLock.RLock()
-	newRep := strings.NewReplacer(replaceList1...)
-	newRep2 := strings.NewReplacer(replaceList2...)
-	replaceListLock.RUnlock()
-	cacheStore.Set("replacer", newRep, cache.DefaultExpiration)
-	cacheStore.Set("replacer2", newRep2, cache.DefaultExpiration)
-	return newRep, newRep2
+	defer replaceListLock.RUnlock()
+	return replacer1, replacer2
 }
 
 func initReplaceList() {
@@ -474,6 +466,7 @@ func initReplaceList() {
 	}
 	replaceList2 = append(replaceList2, "\n")
 	replaceList2 = append(replaceList2, "<br />\n")
+	resetKeywordReplacer()
 	replaceListLock.Unlock()
 }
 
@@ -515,8 +508,8 @@ func deleteKeyword(keyword string) {
 }
 
 func resetKeywordReplacer() {
-	cacheStore.Delete("replacer")
-	cacheStore.Delete("replacer2")
+	replacer1 = strings.NewReplacer(replaceList1...)
+	replacer2 = strings.NewReplacer(replaceList2...)
 	contentCache.Flush()
 }
 
@@ -621,7 +614,6 @@ func main() {
 	store = sessions.NewCookieStore([]byte(sessionSecret))
 
 	// cache create
-	cacheStore = cache.New(2*time.Minute, 2*time.Minute)
 	contentCache = cache.New(2*time.Minute, 2*time.Minute)
 	userCache = map[string]*User{}
 	loadUsers()
