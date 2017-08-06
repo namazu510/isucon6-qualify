@@ -431,12 +431,12 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 	}
 	origContent := content
 
-	re, kw2sha := fetchKeywordReplacer()
-
 	cnt, found := contentCache.Get(content)
 	if found {
 		return cnt.(string)
 	}
+
+	re, kw2sha := fetchKeywordReplacer()
 	content = re.Replace(content)
 	content = html.EscapeString(content)
 	for kw, hash := range kw2sha {
