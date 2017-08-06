@@ -411,7 +411,6 @@ func fetchKeywordReplacer() (*strings.Replacer, *strings.Replacer) {
 	re, found := cacheStore.Get("replacer")
 	re2, found2 := cacheStore.Get("replacer2")
 	if found && found2 {
-		fmt.Println("replacer cache hit!")
 		return re.(*strings.Replacer), re2.(*strings.Replacer)
 	}
 	newRep, newRep2 := genKeywordRepracer()
