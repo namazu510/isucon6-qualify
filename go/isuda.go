@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha1"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
@@ -26,12 +25,14 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
 	"github.com/unrolled/render"
+	"io"
 	"sync"
 )
 
 const (
-	sessionName   = "isuda_session"
-	sessionSecret = "tonymoris"
+	sessionName              = "isuda_session"
+	sessionSecret            = "tonymoris"
+	isupamValidRsponseLength = 14
 )
 
 var (
@@ -540,12 +541,12 @@ func isSpamContents(content string) bool {
 	panicIf(err)
 	defer resp.Body.Close()
 
-	var data struct {
-		Valid bool `json:valid`
+	body := make([]byte, 100)
+	n, err := resp.Body.Read(body)
+	if err != io.EOF {
+		panicIf(err)
 	}
-	err = json.NewDecoder(resp.Body).Decode(&data)
-	panicIf(err)
-	return !data.Valid
+	return n != isupamValidRsponseLength
 }
 
 func getContext(r *http.Request, key interface{}) interface{} {
