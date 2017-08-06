@@ -533,6 +533,7 @@ func main() {
 
 	// cache create
 	cacheStore = cache.New(5*time.Minute, 10*time.Minute)
+	contentCache =cache.New(5*time.Minute, 10*time.Minute)
 
 	re = render.New(render.Options{
 		Directory: "views",
