@@ -439,15 +439,22 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 	re, kw2sha := fetchKeywordReplacer()
 	content = re.Replace(content)
 	content = html.EscapeString(content)
+	replaceList := make([]string, 0, 1000)
 	for kw, hash := range kw2sha {
 		u, err := r.URL.Parse(baseUrl.String() + "/keyword/" + pathURIEscape(kw))
 		panicIf(err)
 		link := fmt.Sprintf("<a href=\"%s\">%s</a>", u, html.EscapeString(kw))
+		replaceList = append(replaceList, hash)
+		replaceList = append(replaceList, link)
 		content = strings.Replace(content, hash, link, -1)
 	}
-	content = strings.Replace(content, "\n", "<br />\n", -1)
+	replaceList = append(replaceList, "\n")
+	replaceList = append(replaceList, "<br />\n")
+	re = strings.NewReplacer(replaceList...)
+	content = re.Replace(content);
 	contentCache.Set(origContent, content, cache.DefaultExpiration)
 	return content
+
 }
 
 func isSpamContents(content string) bool {
