@@ -568,9 +568,9 @@ func main() {
 	store = sessions.NewCookieStore([]byte(sessionSecret))
 
 	// cache create
-	cacheStore = cache.New(5*time.Minute, 10*time.Minute)
-	contentCache = cache.New(5*time.Minute, 10*time.Minute)
-	userCache = cache.New(5*time.Minute, 10*time.Minute)
+	cacheStore = cache.New(2*time.Minute, 2*time.Minute)
+	contentCache = cache.New(2*time.Minute, 2*time.Minute)
+	userCache = cache.New(2*time.Minute, 2*time.Minute)
 	loadUsers()
 
 	re = render.New(render.Options{
