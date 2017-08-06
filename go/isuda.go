@@ -38,16 +38,19 @@ var (
 	isutarEndpoint string
 	isupamEndpoint string
 
-	baseUrl        *url.URL
-	db             *sql.DB
-	re             *render.Render
-	reIsutar       *render.Render
-	store          *sessions.CookieStore
-	cacheStore     *cache.Cache
-	contentCache   *cache.Cache
-	userCache      map[string]*User
-	userCacheLock  sync.RWMutex
-	errInvalidUser = errors.New("Invalid User")
+	baseUrl         *url.URL
+	db              *sql.DB
+	re              *render.Render
+	reIsutar        *render.Render
+	store           *sessions.CookieStore
+	cacheStore      *cache.Cache
+	contentCache    *cache.Cache
+	userCache       map[string]*User
+	userCacheLock   sync.RWMutex
+	replaceList1    []string
+	replaceList2    []string
+	replaceListLock sync.RWMutex
+	errInvalidUser  = errors.New("Invalid User")
 )
 
 // key is userID or userName
@@ -100,6 +103,7 @@ func authenticate(w http.ResponseWriter, r *http.Request) error {
 func initializeIsudaHandler(w http.ResponseWriter, r *http.Request) {
 	_, err := db.Exec(`DELETE FROM entry WHERE id > 7101`)
 	panicIf(err)
+	initReplaceList()
 
 	_, err = db.Exec("TRUNCATE star")
 	panicIf(err)
@@ -197,7 +201,7 @@ func keywordPostHandler(w http.ResponseWriter, r *http.Request) {
 		author_id = ?, keyword = ?, description = ?, updated_at = NOW()
 	`, userID, keyword, description, userID, keyword, description)
 	panicIf(err)
-	resetKeywordReplacer()
+	addKeyword(keyword)
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -355,7 +359,7 @@ func keywordByKeywordDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err = db.Exec(`DELETE FROM entry WHERE keyword = ?`, keyword)
 	panicIf(err)
-	resetKeywordReplacer()
+	deleteKeyword(keyword)
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -413,6 +417,7 @@ func starsPostHandler(w http.ResponseWriter, r *http.Request) {
 	rows.Close()
 	setStars(keyword, user)
 	reIsutar.JSON(w, http.StatusOK, map[string]string{"result": "ok"})
+
 }
 
 func fetchKeywordReplacer() (*strings.Replacer, *strings.Replacer) {
@@ -421,13 +426,16 @@ func fetchKeywordReplacer() (*strings.Replacer, *strings.Replacer) {
 	if found && found2 {
 		return re.(*strings.Replacer), re2.(*strings.Replacer)
 	}
-	newRep, newRep2 := genKeywordRepracer()
+	replaceListLock.RLock()
+	newRep := strings.NewReplacer(replaceList1...)
+	newRep2 := strings.NewReplacer(replaceList2...)
+	replaceListLock.RUnlock()
 	cacheStore.Set("replacer", newRep, cache.DefaultExpiration)
 	cacheStore.Set("replacer2", newRep2, cache.DefaultExpiration)
 	return newRep, newRep2
 }
 
-func genKeywordRepracer() (*strings.Replacer, *strings.Replacer) {
+func initReplaceList() {
 	rows, err := db.Query(`
 		SELECT keyword FROM entry ORDER BY CHARACTER_LENGTH(keyword) DESC
 	`)
@@ -446,16 +454,17 @@ func genKeywordRepracer() (*strings.Replacer, *strings.Replacer) {
 		keywords = append(keywords, regexp.QuoteMeta(entry.Keyword))
 	}
 
-	replaceList := make([]string, 0, 8000)
+	replaceListLock.Lock()
+	replaceList1 = make([]string, 0, 8000)
 	kw2sha := make(map[string]string)
 	for _, keyword := range keywords {
 		hashKey := "isuda_" + fmt.Sprintf("%x", sha1.Sum([]byte(keyword)))
 		kw2sha[keyword] = hashKey
-		replaceList = append(replaceList, keyword)
-		replaceList = append(replaceList, hashKey)
+		replaceList1 = append(replaceList1, keyword)
+		replaceList1 = append(replaceList1, hashKey)
 	}
 
-	replaceList2 := make([]string, 0, 8000)
+	replaceList2 = make([]string, 0, 8000)
 	for kw, hash := range kw2sha {
 		u, err := baseUrl.Parse(baseUrl.String() + "/keyword/" + pathURIEscape(kw))
 		panicIf(err)
@@ -465,8 +474,44 @@ func genKeywordRepracer() (*strings.Replacer, *strings.Replacer) {
 	}
 	replaceList2 = append(replaceList2, "\n")
 	replaceList2 = append(replaceList2, "<br />\n")
+	replaceListLock.Unlock()
+}
 
-	return strings.NewReplacer(replaceList...), strings.NewReplacer(replaceList2...)
+func addKeyword(keyword string) {
+	hash := "isuda_" + fmt.Sprintf("%x", sha1.Sum([]byte(keyword)))
+	u, err := baseUrl.Parse(baseUrl.String() + "/keyword/" + pathURIEscape(keyword))
+	panicIf(err)
+	link := fmt.Sprintf("<a href=\"%s\">%s</a>", u, html.EscapeString(keyword))
+
+	replaceListLock.Lock()
+	replaceList1 = append(replaceList1, keyword, hash)
+	replaceList2[len(replaceList2)-2] = hash
+	replaceList2[len(replaceList2)-1] = link
+	replaceList2 = append(replaceList2, "\n", "<br />\n")
+	resetKeywordReplacer()
+	replaceListLock.Unlock()
+}
+
+func deleteKeyword(keyword string) {
+	replaceListLock.Lock()
+	for i := 0; i < len(replaceList1); i += 2 {
+		if replaceList1[i] == keyword {
+			// remove replaceList1[i], replaceList1[i+1]
+			for j := i + 2; j < len(replaceList1); j++ {
+				replaceList1[j-2] = replaceList1[j]
+			}
+			replaceList1 = replaceList1[:len(replaceList1)-2]
+
+			// remove replaceList2[i], replaceList2[i+1]
+			for j := i + 2; j < len(replaceList2); j++ {
+				replaceList2[j-2] = replaceList2[j]
+			}
+			replaceList2 = replaceList2[:len(replaceList2)-2]
+			break
+		}
+	}
+	resetKeywordReplacer()
+	replaceListLock.Unlock()
 }
 
 func resetKeywordReplacer() {
